@@ -35,13 +35,17 @@ def remove_header(f):
 
     #first few lines are junk
     line = f.readline()
-    if line.strip() == '<bodies>': #exactly how many lines to skip depends on if we have the tags or not
-        n_skip = 3
-        has_bodies_tag = True
-    else:
-        n_skip = 2
-    for i in range(n_skip):
+    if line.strip() == '<bodies>': #skip the <bodies> tag
         f.readline()
+
+    # Backwards compatibility with old .out files
+    if line.strip().split('=')[0].strip() == 'cartesian':
+        old_format = True
+        f.readline() #skip cartesian flag
+        f.readline() #skip lbr & xyz flag
+    else:
+        old_format = False
+        f.readline() #skip simple_output flag
 
     #next line has COM info
     line = f.readline()
@@ -51,7 +55,7 @@ def remove_header(f):
     comass = [float(line[0]), float(line[1]), float(line[2])]
     comom = [float(line[3]), float(line[4]), float(line[5])]
 
-    return comass, comom, has_bodies_tag
+    return comass, comom, has_bodies_tag, old_format
 
 #parses a milkyway ".out" file and returns a Timestep class structure
 def read_output(f, start=None, stop=None):
@@ -73,15 +77,46 @@ def read_output(f, start=None, stop=None):
     f = open(f, 'r')
 
     #remove the header, get relevant info from header
-    comass, comom, has_bodies_tag = remove_header(f)
+    comass, comom, has_bodies_tag, old_format = remove_header(f)
+
+    # Adjust file length for progress bar to account for header lines
+    if progress_bars:
+        if old_format:
+            header_lines = 6 if has_bodies_tag else 5
+        else:
+            header_lines = 5 if has_bodies_tag else 4
+        flen -= header_lines
 
     if has_bodies_tag: #have to account for the </bodies> tag at the end of the file
         if stop is not None: #if stop is given, then you assume it cuts off before the end of the file
             stop = flen - 1
             flen -= 1
+        else:
+            # Account for the </bodies> tag at the end
+            flen -= 1
 
-    #store the data here temporarily
-    array_dict = {0:[], 1:[], 2:[], 3:[], 4:[], 5:[], 6:[], 7:[], 8:[], 9:[], 10:[], 11:[]}
+    #next line is the column headers
+    line = f.readline()
+    column_names = []
+    
+    # The header starts with #
+    line = line.strip().strip('#').strip()
+    column_names = line.split()
+
+    # Clean up column names - remove any trailing commas and extra whitespace
+    cleaned_column_names = []
+    for name in column_names:
+        # Remove trailing commas and clean up whitespace
+        clean_name = name.strip()
+        if clean_name:  # Only add non-empty names
+            cleaned_column_names.append(clean_name)
+    
+    column_names = cleaned_column_names
+
+    #store the data here temporarily - make it dynamic based on number of columns
+    array_dict = {}
+    for i in range(len(column_names)):
+        array_dict[i] = []
 
     #place all the data from the file into the dictionary
     j = 0 #line num tracker
@@ -98,8 +133,7 @@ def read_output(f, start=None, stop=None):
 
         line = line.strip().split(',')
         i = 0
-        while i < len(line) - 1: #this grabs l, b, r data even though that is calculated from x, y, z in the Timestep class implementation
-                                 #it's mostly just for simplicity when reading in, although I guess it probably slows down the code somewhat
+        while i < len(line) and i < len(column_names): #this grabs all columns up to the number of column names
             array_dict[i].append(float(line[i]))
             i += 1
         j += 1
@@ -117,9 +151,57 @@ def read_output(f, start=None, stop=None):
 
     #return the Timestep class using the array dictionary we built
     if verbose:
-        print(f"\n{len(array_dict[1])} objects read in")
+        # Use the length of the first available array to get the number of objects
+        num_objects = len(next(iter(array_dict.values()))) if array_dict else 0
+        print(f"\n{num_objects} objects read in")
         print('\rConverting data...', end='')
-    d = Timestep(typ=array_dict[0], id_val=array_dict[1], x=array_dict[2], y=array_dict[3], z=array_dict[4], vx=array_dict[8], vy=array_dict[9], vz=array_dict[10], mass=array_dict[11], center_of_mass=comass, center_of_momentum=comom)
+    
+    # Map columns based on column names
+    timestep_kwargs = {
+        'center_of_mass': comass,
+        'center_of_momentum': comom
+    }
+    
+    # Map data to kwargs for Timestep class
+    for i, col_name in enumerate(column_names):
+        if col_name in ['ignore']:
+            timestep_kwargs['typ'] = array_dict[i]
+        elif col_name in ['id']:
+            timestep_kwargs['id_val'] = array_dict[i]
+        elif col_name in ['x']:
+            timestep_kwargs['x'] = array_dict[i]
+        elif col_name in ['y']:
+            timestep_kwargs['y'] = array_dict[i]
+        elif col_name in ['z']:
+            timestep_kwargs['z'] = array_dict[i]
+        elif col_name in ['v_x', 'vx']:
+            timestep_kwargs['vx'] = array_dict[i]
+        elif col_name in ['v_y', 'vy']:
+            timestep_kwargs['vy'] = array_dict[i]
+        elif col_name in ['v_z', 'vz']:
+            timestep_kwargs['vz'] = array_dict[i]
+        elif col_name in ['mass']:
+            timestep_kwargs['mass'] = array_dict[i]
+        elif col_name in ['l']:
+            timestep_kwargs['l'] = array_dict[i]
+        elif col_name in ['b']:
+            timestep_kwargs['b'] = array_dict[i]
+        elif col_name in ['r']:
+            timestep_kwargs['r'] = array_dict[i]
+        elif col_name in ['v_los']:
+            timestep_kwargs['vlos'] = array_dict[i]
+        elif col_name in ['pmra']:
+            timestep_kwargs['pmra'] = array_dict[i]
+        elif col_name in ['pmdec']:
+            timestep_kwargs['pmdec'] = array_dict[i]
+        elif col_name in ['Lambda']:
+            timestep_kwargs['Lambda'] = array_dict[i]
+        elif col_name in ['Beta']:
+            timestep_kwargs['Beta'] = array_dict[i]
+            
+    # Create Timestep with available data
+    d = Timestep(**timestep_kwargs)
+    
     if verbose:
         print('done')
 
@@ -159,7 +241,9 @@ def read_input(f):
 
     #return the Timestep class using the array dictionary we built
     if verbose:
-        print('\n'+ str(len(array_dict[1])) + ' objects read in')
+        # Use the length of the first available array to get the number of objects
+        num_objects = len(next(iter(array_dict.values()))) if array_dict else 0
+        print('\n'+ str(num_objects) + ' objects read in')
         print('\rConverting data...', end='')
     d = Timestep(typ=array_dict[0], id_val=array_dict[1], x=array_dict[2], y=array_dict[3], z=array_dict[4], vx=array_dict[5], vy=array_dict[6], vz=array_dict[7], mass=array_dict[8], center_of_mass=[0,0,0], center_of_momentum=[0,0,0])
     if verbose:
