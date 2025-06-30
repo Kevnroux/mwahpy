@@ -36,19 +36,21 @@ def remove_header(f):
     #first few lines are junk
     line = f.readline()
     if line.strip() == '<bodies>': #skip the <bodies> tag
-        f.readline()
+        has_bodies_tag = True
+        line = f.readline()
 
     # Backwards compatibility with old .out files
     if line.strip().split('=')[0].strip() == 'cartesian':
         old_format = True
-        f.readline() #skip cartesian flag
-        f.readline() #skip lbr & xyz flag
+        f.readline()
+        f.readline()
     else:
         old_format = False
-        f.readline() #skip simple_output flag
+        f.readline() 
+
 
     #next line has COM info
-    line = f.readline()
+    line = f.readline() 
     line = line.split(',')
     line[0] = line[0].strip('centerOfMass = ')
     line[3] = line[3].strip('centerOfMomentum = ')
@@ -115,8 +117,8 @@ def read_output(f, start=None, stop=None):
 
     #store the data here temporarily - make it dynamic based on number of columns
     array_dict = {}
-    for i in range(len(column_names)):
-        array_dict[i] = []
+    for col_name in column_names:
+        array_dict[col_name] = []
 
     #place all the data from the file into the dictionary
     j = 0 #line num tracker
@@ -131,10 +133,14 @@ def read_output(f, start=None, stop=None):
     j = 0 #reset line counter for progress bar
     for line in f:
 
+        # Skip the </bodies> tag if present
+        if line.strip() == '</bodies>':
+            break
+
         line = line.strip().split(',')
         i = 0
         while i < len(line) and i < len(column_names): #this grabs all columns up to the number of column names
-            array_dict[i].append(float(line[i]))
+            array_dict[column_names[i]].append(float(line[i]))
             i += 1
         j += 1
 
@@ -163,41 +169,23 @@ def read_output(f, start=None, stop=None):
     }
     
     # Map data to kwargs for Timestep class
-    for i, col_name in enumerate(column_names):
-        if col_name in ['ignore']:
-            timestep_kwargs['typ'] = array_dict[i]
-        elif col_name in ['id']:
-            timestep_kwargs['id_val'] = array_dict[i]
-        elif col_name in ['x']:
-            timestep_kwargs['x'] = array_dict[i]
-        elif col_name in ['y']:
-            timestep_kwargs['y'] = array_dict[i]
-        elif col_name in ['z']:
-            timestep_kwargs['z'] = array_dict[i]
-        elif col_name in ['v_x', 'vx']:
-            timestep_kwargs['vx'] = array_dict[i]
-        elif col_name in ['v_y', 'vy']:
-            timestep_kwargs['vy'] = array_dict[i]
-        elif col_name in ['v_z', 'vz']:
-            timestep_kwargs['vz'] = array_dict[i]
-        elif col_name in ['mass']:
-            timestep_kwargs['mass'] = array_dict[i]
-        elif col_name in ['l']:
-            timestep_kwargs['l'] = array_dict[i]
-        elif col_name in ['b']:
-            timestep_kwargs['b'] = array_dict[i]
-        elif col_name in ['r']:
-            timestep_kwargs['r'] = array_dict[i]
-        elif col_name in ['v_los']:
-            timestep_kwargs['vlos'] = array_dict[i]
-        elif col_name in ['pmra']:
-            timestep_kwargs['pmra'] = array_dict[i]
-        elif col_name in ['pmdec']:
-            timestep_kwargs['pmdec'] = array_dict[i]
-        elif col_name in ['Lambda']:
-            timestep_kwargs['Lambda'] = array_dict[i]
-        elif col_name in ['Beta']:
-            timestep_kwargs['Beta'] = array_dict[i]
+    for col_name in column_names:
+        # Handle special cases for column name mapping
+        if col_name == 'ignore':
+            timestep_kwargs['typ'] = array_dict[col_name]
+        elif col_name == 'id':
+            timestep_kwargs['id_val'] = array_dict[col_name]
+        elif col_name == 'v_x':
+            timestep_kwargs['vx'] = array_dict[col_name]
+        elif col_name == 'v_y':
+            timestep_kwargs['vy'] = array_dict[col_name]
+        elif col_name == 'v_z':
+            timestep_kwargs['vz'] = array_dict[col_name]
+        elif col_name == 'v_los':
+            timestep_kwargs['vlos'] = array_dict[col_name]
+        else:
+            # For most columns, just use the column name directly
+            timestep_kwargs[col_name] = array_dict[col_name]
             
     # Create Timestep with available data
     d = Timestep(**timestep_kwargs)
@@ -428,6 +416,10 @@ def read_histogram(hist_file_path):
                 if (line[0]=='betaBins'):
                     hist.betaBins = int(line[2])
                     #print(hist.betaBins)
+                #Had Porper Motion Flag
+                if (line[0]=='hasPM'):
+                    hist.hasPM = int(line[2])
+                    #print(hist.hasPM)
                 #Getting Data (Not sure if useBin can have any other value other than 1)
                 if (line[0]=='1'):
                     if (hist.orbitFitting): #checks to see how many columns there are since different in different versions
@@ -442,11 +434,18 @@ def read_histogram(hist_file_path):
                             hist.losVelocityDispersion.append(float(line[7]))
                             hist.velocityDispersionError.append(float(line[8]))
                             hist.losVelocity.append(float(line[9]))
-                            hist.losVelocityError.append(float(line[1]))
+                            hist.losVelocityError.append(float(line[10]))
                             hist.betaAverage.append(float(line[11]))
                             hist.betaAverageError.append(float(line[12]))
                             hist.distance.append(float(line[13]))
-                            hist.distanceError.append(float(line[12]))
+                            hist.distanceError.append(float(line[14]))
+                            
+                            # Add proper motion columns if hasPM is True
+                            if hist.hasPM:
+                                hist.pmra.append(float(line[15]))
+                                hist.pmraError.append(float(line[16]))
+                                hist.pmdec.append(float(line[17]))
+                                hist.pmdecError.append(float(line[18]))
                         except ValueError:
                             print('Invalid histagram data entry: Non-numerical value in histogram data on line ' + str(lineNumber))
                     else:
@@ -460,6 +459,13 @@ def read_histogram(hist_file_path):
                             hist.betaDispersionError.append(float(line[6]))
                             hist.losVelocityDispersion.append(float(line[7]))
                             hist.velocityDispersionError.append(float(line[8]))
+                            
+                            # Add proper motion columns if hasPM is True
+                            if hist.hasPM:
+                                hist.pmra.append(float(line[9]))
+                                hist.pmraError.append(float(line[10]))
+                                hist.pmdec.append(float(line[11]))
+                                hist.pmdecError.append(float(line[12]))
                         except ValueError:
                             print('Invalid histagram data entry: Non-numerical value in histogram data on line ' + str(lineNumber))
                 
@@ -481,6 +487,10 @@ def hist_to_df(hist):
             print('Orbit fitting data included')
         else:
             print('Orbit fitting data not included')
+        if (hist.hasPM):
+            print('Proper motion data included')
+        else:
+            print('Proper motion data not included')
     df['Use Bin'] = hist.useBin
     df['Lambda'] = hist.lamb
     df['Beta'] = hist.beta 
@@ -497,6 +507,11 @@ def hist_to_df(hist):
         df['Beta Average Error'] = hist.betaAverageError
         df['Distance'] = hist.distance
         df['Distance Error'] = hist.distanceError
+    if (hist.hasPM):
+        df['PMRA'] = hist.pmra
+        df['PMRA Error'] = hist.pmraError
+        df['PMDEC'] = hist.pmdec
+        df['PMDEC Error'] = hist.pmdecError
     if (verbose):
         print('Done')
     return df

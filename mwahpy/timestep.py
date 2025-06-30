@@ -44,9 +44,7 @@ class AttrDict(dict):
 
 class Timestep():
 
-    def __init__(self, typ=list(), id_val=list(), x=list(), y=list(), z=list(), vx=list(), vy=list(), vz=list(), mass=list(), center_of_mass=[0, 0, 0], center_of_momentum=[0, 0, 0], potential=None, time=None, nbody=None,
-                 # Optional quantities that can either be read in from the full output, ignored or calculated if asked for
-                 l = None, b = None, r = None, vlos = None, pmra = None, pmdec = None, Lambda = None, Beta = None):
+    def __init__(self, typ=list(), id_val=list(), x=list(), y=list(), z=list(), vx=list(), vy=list(), vz=list(), mass=list(), center_of_mass=[0, 0, 0], center_of_momentum=[0, 0, 0], potential=None, time=None, nbody=None, **kwargs):
         #all this is typically specified by the read_output function in output_handler
         #read_output is the preferred way to input data to this data structure
         #but if you're really feeling adventurous you can always do it yourself
@@ -85,49 +83,11 @@ class Timestep():
         self.center_of_mass = center_of_mass
         self.center_of_momentum = center_of_momentum
 
-        # Store optional quantities if they are provided
-        if l is not None:
-            self.l = np.array(l)
-            self._provided_l = True
-        else:
-            self._provided_l = False
-        if b is not None:
-            self.b = np.array(b)
-            self._provided_b = True
-        else:
-            self._provided_b = False
-        if r is not None:
-            self.r = np.array(r)
-            self._provided_r = True
-        else:
-            self._provided_r = False
-        if vlos is not None:
-            self.vlos = np.array(vlos)
-            self._provided_vlos = True
-        else:
-            self._provided_vlos = False
-        if pmra is not None:
-            self.pmra = np.array(pmra)
-            self._provided_pmra = True
-        else:
-            self._provided_pmra = False
-        if pmdec is not None:
-            self.pmdec = np.array(pmdec)
-            self._provided_pmdec = True
-        else:
-            self._provided_pmdec = False
-        if Lambda is not None:
-            self.Lambda = np.array(Lambda)
-            self._provided_Lambda = True
-        else:
-            self.Lambda = None
-            self._provided_Lambda = False
-        if Beta is not None:
-            self.Beta = np.array(Beta)
-            self._provided_Beta = True
-        else:
-            self.Beta = None
-            self._provided_Beta = False
+        # Store any additional quantities provided via kwargs
+        self._provided_vals = []
+        for kw in kwargs.keys():
+            self[kw] = np.array(kwargs[kw]) 
+            self._provided_vals.append(kw)
 
         #-----------------------------------------------------------------------
         # HOUSEKEEPING
@@ -326,15 +286,15 @@ class Timestep():
         self.msol = self.mass * struct_to_sol
 
         #position information
-        if not self._provided_r:
+        if not 'r' in self._provided_vals:
             self.r = (self.x**2 + self.y**2 + self.z**2)**0.5
         self.dist = ((self.x + 8)**2 + self.y**2 + self.z**2)**0.5
         self.R = (self.x**2 + self.y**2)**0.5
 
         #galactic coordinate information
-        if not self._provided_l:
+        if not 'l' in self._provided_vals:
             self.l = np.arctan2(self.y, self.x + 8)*180/np.pi
-        if not self._provided_b:
+        if not 'b' in self._provided_vals:
             self.b = np.arcsin(self.z/self.dist)*180/np.pi
 
         #ICRS information
@@ -357,7 +317,7 @@ class Timestep():
 
         #velocity information
         self.vgsr = ((self.x+8)*self.vx + self.y*self.vy + self.z*self.vz)/self.dist
-        if not self._provided_vlos:
+        if not 'vlos' in self._provided_vals:
             self.vlos = self.vgsr - 10.1*np.cos(self.b*np.pi/180)*np.cos(self.l*np.pi/180) - 224*np.cos(self.b*np.pi/180)*np.sin(self.l*np.pi/180) - 6.7*np.sin(self.b*np.pi/180)
         self.vrad = (self.x*self.vx + self.y*self.vy + self.z*self.vz)/self.r
         self.vrot = self.lz/(self.x**2 + self.y**2)**0.5 #should have a factor of cos(theta) I think? Need to define what I mean exactly by this quantity
@@ -378,7 +338,7 @@ class Timestep():
         if verbose:
             print('Calculating proper motion values...')
 
-        if not self._provided_pmra or not self._provided_pmdec:
+        if not 'pmra' in self._provided_vals or not 'pmdec' in self._provided_vals:
             self.pmra, self.pmdec = get_rvpm(self.ra, self.dec, self.dist, self.vx, self.vy, self.vz)[1:]
         #already get rv from vlos, don't need to save it as something else
         self.pmtot = (self.pmra**2 + self.pmdec**2)**0.5
