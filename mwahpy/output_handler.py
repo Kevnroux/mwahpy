@@ -35,23 +35,29 @@ def remove_header(f):
 
     #first few lines are junk
     line = f.readline()
-    if line.strip() == '<bodies>': #exactly how many lines to skip depends on if we have the tags or not
-        n_skip = 3
+    if line.strip() == '<bodies>': #skip the <bodies> tag
         has_bodies_tag = True
-    else:
-        n_skip = 2
-    for i in range(n_skip):
+        line = f.readline()
+
+    # Backwards compatibility with old .out files
+    if line.strip().split('=')[0].strip() == 'cartesian':
+        old_format = True
         f.readline()
+        f.readline()
+    else:
+        old_format = False
+        f.readline() 
+
 
     #next line has COM info
-    line = f.readline()
+    line = f.readline() 
     line = line.split(',')
     line[0] = line[0].strip('centerOfMass = ')
     line[3] = line[3].strip('centerOfMomentum = ')
     comass = [float(line[0]), float(line[1]), float(line[2])]
     comom = [float(line[3]), float(line[4]), float(line[5])]
 
-    return comass, comom, has_bodies_tag
+    return comass, comom, has_bodies_tag, old_format
 
 #parses a milkyway ".out" file and returns a Timestep class structure
 def read_output(f, start=None, stop=None):
@@ -73,15 +79,46 @@ def read_output(f, start=None, stop=None):
     f = open(f, 'r')
 
     #remove the header, get relevant info from header
-    comass, comom, has_bodies_tag = remove_header(f)
+    comass, comom, has_bodies_tag, old_format = remove_header(f)
+
+    # Adjust file length for progress bar to account for header lines
+    if progress_bars:
+        if old_format:
+            header_lines = 6 if has_bodies_tag else 5
+        else:
+            header_lines = 5 if has_bodies_tag else 4
+        flen -= header_lines
 
     if has_bodies_tag: #have to account for the </bodies> tag at the end of the file
         if stop is not None: #if stop is given, then you assume it cuts off before the end of the file
             stop = flen - 1
             flen -= 1
+        else:
+            # Account for the </bodies> tag at the end
+            flen -= 1
 
-    #store the data here temporarily
-    array_dict = {0:[], 1:[], 2:[], 3:[], 4:[], 5:[], 6:[], 7:[], 8:[], 9:[], 10:[], 11:[]}
+    #next line is the column headers
+    line = f.readline()
+    column_names = []
+    
+    # The header starts with #
+    line = line.strip().strip('#').strip()
+    column_names = line.split()
+
+    # Clean up column names - remove any trailing commas and extra whitespace
+    cleaned_column_names = []
+    for name in column_names:
+        # Remove trailing commas and clean up whitespace
+        clean_name = name.strip()
+        if clean_name:  # Only add non-empty names
+            cleaned_column_names.append(clean_name)
+    
+    column_names = cleaned_column_names
+
+    #store the data here temporarily - make it dynamic based on number of columns
+    array_dict = {}
+    for col_name in column_names:
+        array_dict[col_name] = []
 
     #place all the data from the file into the dictionary
     j = 0 #line num tracker
@@ -96,11 +133,14 @@ def read_output(f, start=None, stop=None):
     j = 0 #reset line counter for progress bar
     for line in f:
 
+        # Skip the </bodies> tag if present
+        if line.strip() == '</bodies>':
+            break
+
         line = line.strip().split(',')
         i = 0
-        while i < len(line) - 1: #this grabs l, b, r data even though that is calculated from x, y, z in the Timestep class implementation
-                                 #it's mostly just for simplicity when reading in, although I guess it probably slows down the code somewhat
-            array_dict[i].append(float(line[i]))
+        while i < len(line) and i < len(column_names): #this grabs all columns up to the number of column names
+            array_dict[column_names[i]].append(float(line[i]))
             i += 1
         j += 1
 
@@ -117,9 +157,39 @@ def read_output(f, start=None, stop=None):
 
     #return the Timestep class using the array dictionary we built
     if verbose:
-        print(f"\n{len(array_dict[1])} objects read in")
+        # Use the length of the first available array to get the number of objects
+        num_objects = len(next(iter(array_dict.values()))) if array_dict else 0
+        print(f"\n{num_objects} objects read in")
         print('\rConverting data...', end='')
-    d = Timestep(typ=array_dict[0], id_val=array_dict[1], x=array_dict[2], y=array_dict[3], z=array_dict[4], vx=array_dict[8], vy=array_dict[9], vz=array_dict[10], mass=array_dict[11], center_of_mass=comass, center_of_momentum=comom)
+    
+    # Map columns based on column names
+    timestep_kwargs = {
+        'center_of_mass': comass,
+        'center_of_momentum': comom
+    }
+    
+    # Map data to kwargs for Timestep class
+    for col_name in column_names:
+        # Handle special cases for column name mapping
+        if col_name == 'ignore':
+            timestep_kwargs['typ'] = array_dict[col_name]
+        elif col_name == 'id':
+            timestep_kwargs['id_val'] = array_dict[col_name]
+        elif col_name == 'v_x':
+            timestep_kwargs['vx'] = array_dict[col_name]
+        elif col_name == 'v_y':
+            timestep_kwargs['vy'] = array_dict[col_name]
+        elif col_name == 'v_z':
+            timestep_kwargs['vz'] = array_dict[col_name]
+        elif col_name == 'v_los':
+            timestep_kwargs['vlos'] = array_dict[col_name]
+        else:
+            # For most columns, just use the column name directly
+            timestep_kwargs[col_name] = array_dict[col_name]
+            
+    # Create Timestep with available data
+    d = Timestep(**timestep_kwargs)
+    
     if verbose:
         print('done')
 
@@ -159,7 +229,9 @@ def read_input(f):
 
     #return the Timestep class using the array dictionary we built
     if verbose:
-        print('\n'+ str(len(array_dict[1])) + ' objects read in')
+        # Use the length of the first available array to get the number of objects
+        num_objects = len(next(iter(array_dict.values()))) if array_dict else 0
+        print('\n'+ str(num_objects) + ' objects read in')
         print('\rConverting data...', end='')
     d = Timestep(typ=array_dict[0], id_val=array_dict[1], x=array_dict[2], y=array_dict[3], z=array_dict[4], vx=array_dict[5], vy=array_dict[6], vz=array_dict[7], mass=array_dict[8], center_of_mass=[0,0,0], center_of_momentum=[0,0,0])
     if verbose:
@@ -344,6 +416,10 @@ def read_histogram(hist_file_path):
                 if (line[0]=='betaBins'):
                     hist.betaBins = int(line[2])
                     #print(hist.betaBins)
+                #Had Porper Motion Flag
+                if (line[0]=='hasPM'):
+                    hist.hasPM = int(line[2])
+                    #print(hist.hasPM)
                 #Getting Data (Not sure if useBin can have any other value other than 1)
                 if (line[0]=='1'):
                     if (hist.orbitFitting): #checks to see how many columns there are since different in different versions
@@ -358,11 +434,18 @@ def read_histogram(hist_file_path):
                             hist.losVelocityDispersion.append(float(line[7]))
                             hist.velocityDispersionError.append(float(line[8]))
                             hist.losVelocity.append(float(line[9]))
-                            hist.losVelocityError.append(float(line[1]))
+                            hist.losVelocityError.append(float(line[10]))
                             hist.betaAverage.append(float(line[11]))
                             hist.betaAverageError.append(float(line[12]))
                             hist.distance.append(float(line[13]))
-                            hist.distanceError.append(float(line[12]))
+                            hist.distanceError.append(float(line[14]))
+                            
+                            # Add proper motion columns if hasPM is True
+                            if hist.hasPM:
+                                hist.pmra.append(float(line[15]))
+                                hist.pmraError.append(float(line[16]))
+                                hist.pmdec.append(float(line[17]))
+                                hist.pmdecError.append(float(line[18]))
                         except ValueError:
                             print('Invalid histagram data entry: Non-numerical value in histogram data on line ' + str(lineNumber))
                     else:
@@ -376,6 +459,13 @@ def read_histogram(hist_file_path):
                             hist.betaDispersionError.append(float(line[6]))
                             hist.losVelocityDispersion.append(float(line[7]))
                             hist.velocityDispersionError.append(float(line[8]))
+                            
+                            # Add proper motion columns if hasPM is True
+                            if hist.hasPM:
+                                hist.pmra.append(float(line[9]))
+                                hist.pmraError.append(float(line[10]))
+                                hist.pmdec.append(float(line[11]))
+                                hist.pmdecError.append(float(line[12]))
                         except ValueError:
                             print('Invalid histagram data entry: Non-numerical value in histogram data on line ' + str(lineNumber))
                 
@@ -397,6 +487,10 @@ def hist_to_df(hist):
             print('Orbit fitting data included')
         else:
             print('Orbit fitting data not included')
+        if (hist.hasPM):
+            print('Proper motion data included')
+        else:
+            print('Proper motion data not included')
     df['Use Bin'] = hist.useBin
     df['Lambda'] = hist.lamb
     df['Beta'] = hist.beta 
@@ -413,6 +507,11 @@ def hist_to_df(hist):
         df['Beta Average Error'] = hist.betaAverageError
         df['Distance'] = hist.distance
         df['Distance Error'] = hist.distanceError
+    if (hist.hasPM):
+        df['PMRA'] = hist.pmra
+        df['PMRA Error'] = hist.pmraError
+        df['PMDEC'] = hist.pmdec
+        df['PMDEC Error'] = hist.pmdecError
     if (verbose):
         print('Done')
     return df
