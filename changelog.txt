@@ -1,3 +1,9 @@
+v2.1.1
+ - fix to eq_to_OC_koposov2019 (and inverse), sin and cos were flipped before
+
+v2.1.0
+ - output handler now supports both old and new .out file formats
+
 v2.0.0 (LONG TERM SUPPORT RELEASE)
  - can now search by ID in timestep.print_particle() with use_id=True keyword
  - timestep.subset_rect() and timestep_subset_circ() now both have an inverse=True keyword,

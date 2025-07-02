@@ -1,6 +1,6 @@
-astropy
+numpy
 galpy
 matplotlib
-numpy
-pandas
+astropy
 scipy
+pandas
