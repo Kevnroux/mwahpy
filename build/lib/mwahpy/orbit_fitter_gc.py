@@ -148,7 +148,7 @@ def chi_squared(params, data=[], normal=(0, 0, 0), point=(1, 0, 0)):
 
 #takes in data, then fits a Great Circle to that data and
 #minimizes the chi_squared to fit an orbit to the data
-def optimize(data_opt, max_it, bounds, guess, mode, **kwargs)
+def optimize(data_opt, max_it, bounds, guess, mode, **kwargs):
 
     #compute the preferred galactocentric spherical frame to fit this orbit in
     #(should be close to the orbital plane of the observed data)
